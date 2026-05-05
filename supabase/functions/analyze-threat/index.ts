@@ -11,117 +11,68 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-
-    // Accept both:
-    // { threat: {...} }
-    // and raw threat object {...}
     const threat = body?.threat ?? body;
 
-    if (!threat?.summary) {
-      return json(
-        {
-          error: "Missing threat data",
-          received: body,
-        },
-        400
-      );
+    if (!threat?.summary && !threat?.description) {
+      return json({ error: "Missing threat data", received: body }, 400);
     }
 
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-
     if (!OPENAI_API_KEY) {
-      return json(
-        { error: "OPENAI_API_KEY not configured in Supabase secrets" },
-        500
-      );
+      return json({ error: "OPENAI_API_KEY not configured" }, 500);
     }
 
-    const system = `You are a senior SOC analyst. Given a single threat event JSON, produce a tight, two-paragraph operator briefing:
-1) What is happening, attacker intent, and likely impact (cite the asset and protocol).
-2) Recommended immediate mitigation, prefixed with "→ ", referencing concrete controls (block IP, ACL, rate-limit, isolate node, rotate creds, etc.).
-Keep it under 120 words. No markdown headings, no bullet lists.`;
+    const systemPrompt =
+      "You are a senior SOC analyst. Return only valid JSON with analysis, recommendation, and risk_score.";
 
-    const user = `Threat:\n${JSON.stringify(
-      {
-        category: threat.category,
-        severity: threat.severity,
-        risk: threat.risk,
-        summary: threat.summary,
-        src: threat.src,
-        dst: threat.dst,
-        port: threat.port,
-        protocol: threat.protocol,
-        packets: threat.packets,
-        bytes: threat.bytes,
-      },
-      null,
-      2
-    )}`;
+    const userPrompt = `Analyze this threat:
+Category: ${threat.category}
+Severity: ${threat.severity}
+Source IP: ${threat.src ?? threat.source_ip}
+Target: ${threat.dst ?? threat.target_node}
+Protocol: ${threat.protocol}
+Port: ${threat.port}
+Packets: ${threat.packets ?? threat.packet_count}
+Bytes: ${threat.bytes ?? threat.bytes_transferred}
+Summary: ${threat.summary ?? threat.description}`;
 
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4.1-nano",
+        model: "gpt-4.1-mini",
         temperature: 0.3,
+        response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
         ],
       }),
     });
 
-    const raw = await r.text();
+    const raw = await response.text();
 
-    if (!r.ok) {
-      console.error("OpenAI error:", r.status, raw);
-
-      let message = raw;
-
-      try {
-        const parsed = JSON.parse(raw);
-        message = parsed?.error?.message || raw;
-      } catch {
-        // raw is not JSON
-      }
-
-      return json(
-        {
-          error: "OpenAI request failed",
-          status: r.status,
-          message,
-        },
-        r.status
-      );
+    if (!response.ok) {
+      console.error("OpenAI error:", response.status, raw);
+      return json({ error: "OpenAI request failed", status: response.status, details: raw }, response.status);
     }
 
     const data = JSON.parse(raw);
+    const content = data?.choices?.[0]?.message?.content;
 
-    const analysis =
-      data?.choices?.[0]?.message?.content?.trim() || "No analysis returned.";
-
-    return json({ analysis });
+    return json(JSON.parse(content));
   } catch (e) {
-    console.error("analyze-threat function error:", e);
-
-    return json(
-      {
-        error: e instanceof Error ? e.message : "Unknown server error",
-      },
-      500
-    );
+    console.error("analyze-threat error:", e);
+    return json({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
   }
 });
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: {
-      ...corsHeaders,
-      "Content-Type": "application/json",
-    },
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
