@@ -5,6 +5,8 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req) => {
+  console.log("OPENAI FUNCTION RUNNING NOW - VERSION 10");
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -52,7 +54,7 @@ Risk: ${threat.risk ?? "Unknown"}`;
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4.1-mini",
+        model: "gpt-4o-mini",
         temperature: 0.3,
         response_format: { type: "json_object" },
         messages: [
