@@ -18,23 +18,32 @@ Deno.serve(async (req) => {
     }
 
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+
     if (!OPENAI_API_KEY) {
       return json({ error: "OPENAI_API_KEY not configured" }, 500);
     }
 
-    const systemPrompt =
-      "You are a senior SOC analyst. Return only valid JSON with analysis, recommendation, and risk_score.";
+    const systemPrompt = `You are a senior SOC analyst.
+Return ONLY valid JSON. No markdown. No explanation.
+
+Use this exact JSON structure:
+{
+  "analysis": "string",
+  "recommendation": "string",
+  "risk_score": 0
+}`;
 
     const userPrompt = `Analyze this threat:
-Category: ${threat.category}
-Severity: ${threat.severity}
-Source IP: ${threat.src ?? threat.source_ip}
-Target: ${threat.dst ?? threat.target_node}
-Protocol: ${threat.protocol}
-Port: ${threat.port}
-Packets: ${threat.packets ?? threat.packet_count}
-Bytes: ${threat.bytes ?? threat.bytes_transferred}
-Summary: ${threat.summary ?? threat.description}`;
+Category: ${threat.category ?? "Unknown"}
+Severity: ${threat.severity ?? "Unknown"}
+Source IP: ${threat.src ?? threat.source_ip ?? "Unknown"}
+Target: ${threat.dst ?? threat.target_node ?? "Unknown"}
+Protocol: ${threat.protocol ?? "Unknown"}
+Port: ${threat.port ?? "Unknown"}
+Packets: ${threat.packets ?? threat.packet_count ?? 0}
+Bytes: ${threat.bytes ?? threat.bytes_transferred ?? 0}
+Summary: ${threat.summary ?? threat.description ?? "No summary provided"}
+Risk: ${threat.risk ?? "Unknown"}`;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -57,22 +66,60 @@ Summary: ${threat.summary ?? threat.description}`;
 
     if (!response.ok) {
       console.error("OpenAI error:", response.status, raw);
-      return json({ error: "OpenAI request failed", status: response.status, details: raw }, response.status);
+
+      return json(
+        {
+          error: "OpenAI request failed",
+          status: response.status,
+          details: raw,
+        },
+        response.status
+      );
     }
 
     const data = JSON.parse(raw);
-    const content = data?.choices?.[0]?.message?.content;
+    const content = data?.choices?.[0]?.message?.content?.trim();
 
-    return json(JSON.parse(content));
+    if (!content) {
+      return json(
+        {
+          error: "No content returned from OpenAI",
+          raw: data,
+        },
+        500
+      );
+    }
+
+    try {
+      return json(JSON.parse(content));
+    } catch {
+      return json({
+        analysis: content,
+        recommendation:
+          "Review the threat manually and apply emergency security controls such as blocking the source IP, isolating affected services, and checking authentication logs.",
+        risk_score: threat.risk ?? 80,
+      });
+    }
   } catch (e) {
-    console.error("analyze-threat error:", e);
-    return json({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
+    console.error("FULL FUNCTION ERROR:", e instanceof Error ? e.stack : e);
+
+    return json(
+      {
+        error: "Function crashed",
+        message: e instanceof Error ? e.message : String(e),
+        stack: e instanceof Error ? e.stack : null,
+      },
+      500
+    );
   }
 });
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+    },
   });
 }
