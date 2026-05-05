@@ -29,7 +29,7 @@ Keep it under 120 words. No markdown headings, no bullet lists.`;
       method: "POST",
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "gpt-40-mini",
         messages: [{ role: "system", content: system }, { role: "user", content: user }],
       }),
     });
